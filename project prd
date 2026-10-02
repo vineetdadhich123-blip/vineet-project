@@ -1,0 +1,227 @@
+# Implementation Plan: QuickPrint — Online Printing Web App
+
+QuickPrint is a modern, responsive web application designed for campus print shops, cyber cafes, and commercial printing centers. Customers can scan a shop's QR code at the counter, upload multiple files (PDF, images, documents), customize print settings (B&W/Color, paper size, duplex, page range, binding, lamination), see real-time price calculations, pay securely online, and track their print job in real time. Print shop owners get a live admin dashboard with sound alerts, one-click print status workflow, custom pricing configuration, and printable QR standee generation.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> The application will be created in `C:\Users\HP\.gemini\antigravity\scratch\quickprint` using a modern Node.js + Express backend with a React + Vite + Tailwind CSS frontend.
+> We recommend opening this folder in your IDE or setting it as your active workspace once created.
+
+> [!NOTE]
+> Online payment includes a realistic, fully interactive payment gateway simulation (UPI apps like Google Pay, PhonePe, Paytm with QR scan; Credit/Debit cards; Net Banking) with instant test verification ("Pay & Simulate Success" / "Simulate Failure"), and is architected to easily connect with Razorpay / Stripe credentials.
+
+---
+
+## Architecture & System Overview
+
+```mermaid
+graph TD
+    A["Customer Scans QR / Visits Web App (?shopId=SHOP-101)"] --> B["Shop & Pricing Profile Loaded"]
+    B --> C["Upload Files (PDF, Images, DOCX, PPTX)"]
+    C --> D["Page Extraction & File Preview (PDF.js)"]
+    D --> E["Print Settings (B&W/Color, Size, Duplex, Copies, Page Range, Binding)"]
+    E --> F["Live Dynamic Price Calculation Engine"]
+    F --> G["Review Order & Enter Customer Details"]
+    G --> H["Online Payment (UPI, Cards, Net Banking)"]
+    H --> I["Order Confirmed (Order ID e.g. QP-10245)"]
+    I --> J["Live Order Tracking Timeline"]
+    
+    H -.->|Real-time SSE Notification| K["Admin / Print Shop Dashboard"]
+    K --> L["Sound Alert: New Order Arrived!"]
+    L --> M["Review Specs & Download Files"]
+    M --> N["Update Status: Accepted -> Printing -> Ready -> Completed"]
+    N -.->|Real-time Status Sync| J
+```
+
+---
+
+## Proposed Changes
+
+We will create a clean, unified project directory at:
+`C:\Users\HP\.gemini\antigravity\scratch\quickprint`
+
+### Backend (`server/`)
+
+A Node.js Express server providing RESTful endpoints, Multer file upload handling, real-time Server-Sent Events (SSE) for instant order notifications, and data persistence:
+
+#### [NEW] `server/package.json`
+Dependencies: `express`, `cors`, `multer`, `nanoid` or `uuid`, `dotenv`.
+
+#### [NEW] `server/data/store.js`
+In-memory store with JSON persistence for:
+- **Shops**: Pre-seeded shops (e.g. `SHOP-A001: Campus Print & Xerox Hub`, `SHOP-B002: Metro Digital Printing`).
+- **Pricing Profiles**: Per-page rates (B&W: ₹2, Color: ₹10), Paper sizes (A4, A3, A5, Letter), Paper types (Normal, Premium, Glossy), Duplex rules, Binding (Staple: ₹5, Spiral: ₹30, Thermal: ₹50), Lamination (₹15/sheet), Service fee (₹5).
+- **Orders**: Full order details, file metadata, customer details, payment status, print processing status timestamps.
+
+#### [NEW] `server/controllers/orderController.js` & `server/controllers/shopController.js`
+- Order creation with server-side price verification (prevents client-side price tampering).
+- Payment confirmation and status updates.
+- Real-time broadcast channel using SSE (`/api/events`) for instant sync between customer tracking and shop dashboard.
+- Shop pricing update endpoint allowing shopkeeper to change rates anytime.
+
+#### [NEW] `server/routes/api.js` & `server/server.js`
+- API routes for shops, uploads, orders, payment verification, and file download.
+- Static file serving for uploaded documents.
+- Error handling, file type validation (PDF, JPG, PNG, DOC/DOCX, PPT/PPTX), and size limits.
+
+---
+
+### Frontend (`client/`)
+
+A responsive, high-performance Single Page Application built with React 18, Vite, Tailwind CSS, and Lucide Icons:
+
+#### [NEW] `client/package.json`, `client/vite.config.js`, `client/tailwind.config.js`
+Vite React setup with Tailwind CSS, Lucide React icons, and canvas-confetti.
+
+#### [NEW] `client/src/services/api.js` & `client/src/context/ShopContext.jsx`
+- Manages current shop context (detected from `?shopId=...` in URL, QR scan, or shop picker).
+- Fetches shop settings, live pricing rules, and connects to real-time events.
+
+#### [NEW] `client/src/components/Navbar.jsx`
+- Header with QuickPrint branding, active Shop badge, switch mode (Customer View vs Admin Dashboard), and Order Tracking quick-lookup modal.
+
+#### [NEW] `client/src/components/customer/QRLandingBanner.jsx`
+- Displays the currently detected print shop (e.g., *"Connected to Campus Print & Xerox - Counter 1"*).
+- Includes an interactive QR code scanner simulator (allowing users to test scanning different shop QR codes or uploading a QR image).
+
+#### [NEW] `client/src/components/customer/FileUploader.jsx`
+- Drag & Drop zone, file browser picker, and camera capture option.
+- Supports PDF, JPG, JPEG, PNG, DOC, DOCX, PPT, PPTX.
+- Page counting:
+  - Automatically parses PDF page counts client-side.
+  - Image preview thumbnails.
+  - Document file indicator.
+- Multi-file listing: reorder, remove, replace, add more files.
+- Quick "Use Sample Files" button for instant one-click testing without having to look for documents!
+
+#### [NEW] `client/src/components/customer/PrintSettings.jsx`
+Configures printing preferences per file or for all uploaded files:
+- **Colour**: ⚫ Black & White vs 🌈 Full Colour.
+- **Paper Size**: A4 (Default), A3, A5, Letter.
+- **Paper Type**: Normal Paper (75 GSM), Premium Bond (100 GSM), Glossy Photo Paper.
+- **Print Side**: Single Side vs Double Side (with duplex sheet count math).
+- **Copies**: Interactive stepper counter `[-] 1 [+]`.
+- **Page Selection**:
+  - `All Pages`
+  - `Custom Pages` with input validation (e.g., `1-5, 8, 10-12`) and automatic quantity calculation.
+- **Additional Services**:
+  - Orientation (Portrait / Landscape)
+  - Fit to page / Actual size
+  - Stapling (+₹5)
+  - Spiral Binding (+₹30)
+  - Soft Thermal Binding (+₹50)
+  - Lamination (+₹15 per sheet)
+
+#### [NEW] `client/src/components/customer/PriceSummary.jsx`
+- Real-time itemized price breakdown table exactly reflecting PRD Section 9:
+  - B&W Pages (count × rate)
+  - Colour Pages (count × rate)
+  - Double Side sheet calculation
+  - Additional services (Lamination, Binding, Staple)
+  - Shop Service Fee
+  - Grand Total in Indian Rupees (₹)
+- Continues to Customer Details.
+
+#### [NEW] `client/src/components/customer/CustomerDetailsModal.jsx`
+- Collects: Customer Name, 10-digit Mobile Number, Email (optional).
+- Shows detected Shop ID and pickup instructions.
+
+#### [NEW] `client/src/components/customer/PaymentModal.jsx`
+- Realistic interactive payment gateway:
+  - **UPI Tab**: Google Pay, PhonePe, Paytm, BHIM, and Dynamic QR code payment with auto-timer.
+  - **Cards Tab**: Credit / Debit card form with card formatting.
+  - **Net Banking Tab**: Popular banks selection.
+  - **Test Controls**: "Simulate Successful Payment" (instant one-click order confirmation) and "Simulate Failure" to test error flows.
+  - Status display: Pending → Processing → Successful.
+
+#### [NEW] `client/src/components/customer/OrderConfirmation.jsx` & `client/src/components/customer/OrderTracker.jsx`
+- Celebration confetti on success.
+- Order ID: `QP-10245`.
+- Live visual step-by-step progress timeline:
+  1. `Order Received`
+  2. `Payment Confirmed`
+  3. `File Processing`
+  4. `Printing`
+  5. `Print Ready` (Alert: "Your print is ready! Show Order ID at Counter 1")
+  6. `Completed`
+- Real-time status sync via Server-Sent Events (SSE).
+- Download order receipt / PDF summary.
+- Customer order history / phone lookup.
+
+---
+
+### Admin / Print Shop Panel (`client/src/components/admin/`)
+
+#### [NEW] `client/src/components/admin/AdminDashboard.jsx`
+- Shop selector / Shop switcher.
+- Audio bell notification on new orders (with mute toggle).
+- Status Tabs:
+  - `All Orders`
+  - `New & Paid`
+  - `Printing Queue`
+  - `Ready for Pickup`
+  - `Completed`
+  - `Cancelled`
+- Metric Cards: Today's Revenue (₹), Total Orders, Pending Prints, Active Customers.
+
+#### [NEW] `client/src/components/admin/OrderCard.jsx` & `OrderDetailsModal.jsx`
+- Customer details (Name, Mobile, direct WhatsApp message shortcut: *"Your print order QP-10245 is ready!"*).
+- Uploaded file previews and 1-click Download / Print button.
+- Clear print specification breakdown (Colour/B&W, Single/Double sided, Selected pages, Paper size, Copies, Binding/Lamination).
+- Action buttons to advance status:
+  - `[Accept Order]`
+  - `[Start Printing]`
+  - `[Mark as Ready for Pickup]`
+  - `[Complete Order]`
+  - `[Cancel / Reject]`
+
+#### [NEW] `client/src/components/admin/ShopPricingManager.jsx`
+- Allows shop owner to edit per-page rates, duplex discount, paper types, binding, lamination, and service fee.
+- Saves directly to the backend database.
+
+#### [NEW] `client/src/components/admin/QRCodeGenerator.jsx`
+- Generates high-res QR code for the shop's counter/table standee.
+- Customizable shop name, desk/counter number (e.g. "Counter 1 - Fast Printing").
+- Print Standee feature: formatted for A5/A4 printable counter tent card with instructions for customers!
+
+---
+
+## Verification Plan
+
+### Automated & Build Verification
+1. Verify backend starts cleanly without errors on port `5000`.
+2. Verify frontend Vite builds cleanly with `npm run build`.
+3. Test backend REST endpoints:
+   - File upload (`POST /api/upload`)
+   - Order creation & price verification (`POST /api/orders`)
+   - Payment transition (`POST /api/orders/:id/payment`)
+   - Status transitions (`PATCH /api/admin/orders/:id/status`)
+   - SSE connection (`GET /api/events`)
+
+### Manual End-to-End User Flow Verification
+1. **QR Scanning & Shop Detection**:
+   - Open app with `?shopId=SHOP-A001` → verify shop name and custom pricing loaded.
+   - Use the in-app QR code scanner to switch to `SHOP-B002`.
+2. **File Upload & Page Detection**:
+   - Upload sample PDF/Image → verify file card displays name, format badge, page count, and thumbnail preview.
+   - Add multiple files, test delete and reorder.
+3. **Print Options & Price Calculation**:
+   - Toggle B&W vs Colour → verify price updates immediately.
+   - Toggle Single vs Double Side → verify sheet calculations.
+   - Change copies → verify multiplier.
+   - Test Custom Pages input (`1-3, 5`) → verify only 4 pages are billed.
+   - Select Spiral Binding + Lamination → verify itemized breakdown in summary table.
+4. **Checkout & Payment**:
+   - Enter Customer details (Name, Mobile).
+   - Open Payment modal → choose UPI / Card → click "Simulate Payment Success".
+   - Verify Confetti triggers, Order ID generated (e.g. `QP-10245`), and order enters Live Tracking.
+5. **Admin Dashboard & Real-Time Sync**:
+   - Open Admin Panel in a second tab/window.
+   - Verify new order pops up immediately with sound alert.
+   - Change status to "Start Printing" then "Mark as Ready".
+   - Switch back to Customer tab → verify live tracker automatically moves to "Print Ready" without page reload!
+6. **QR Standee Generator**:
+   - In Admin Panel, open "QR Standee Generator" → check QR code rendering and "Print Counter Standee" preview.
